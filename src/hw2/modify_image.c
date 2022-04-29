@@ -239,10 +239,13 @@ image make_emboss_filter()
 }
 
 // Question 2.3.1: Which of these filters should we use preserve when we run our convolution and which ones should we not? Why?
-// Answer: TODO
+// Answer: We need to use preserve when using emboss filter and sharpen filter, and do not use preserve when using high-pass filter
+// Highpass filter is aiming to find edges, and only applied to the graytone image.
+// Emboss and Sharpen filters are applied on all three bands.
 
 // Question 2.3.2: Do we have to do any post-processing for the above filters? Which ones and why?
-// Answer: TODO
+// Answer: yes, post-processing is needed for highpass filter. The greystone value should be within 0-255
+// we need clamping for the values exceeds 255 when we use the preserve
 
 image make_gaussian_filter(float sigma)
 {
