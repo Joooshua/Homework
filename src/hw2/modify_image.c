@@ -19,8 +19,9 @@ float nn_interpolate(image im, float x, float y, int c)
       given a floating column value "x", row value "y" and integer channel "c",
       and returns the interpolated value.
     ************************************************************************/
-    float x1 = ((x - floor(x)) > 0.5) ? ceil(x) : floor(x + 0.5);
-    float y1 = ((y - floor(y)) > 0.5) ? ceil(y) : floor(y + 0.5);
+    // approximate the value to the nearest neighbor
+    float x1 = ((x - floor(x)) >= 0.5) ? ceil(x) : floor(x);
+    float y1 = ((y - floor(y)) >= 0.5) ? ceil(y) : floor(y);
     return get_pixel(im, x1, y1, c);
 }
 
@@ -32,17 +33,17 @@ image nn_resize(image im, int w, int h)
       image of size "w x h"
     ************************************************************************/
     image new_im = make_image(w, h, im.c);
-
+    // use nn to resize
     float w_ratio = (float)im.w / w;
     float h_ratio = (float)im.h / h;
     for (int x = 0; x < w; x++) {
       for (int y = 0; y < h; y++) {
         for (int c = 0; c < im.c; c++) {
-          // why?
-          float x_old = (x * w_ratio) + 0.5 * (w_ratio - 1);
-          float y_old = (y * h_ratio) + 0.5 * (h_ratio - 1);
-          float v_old = nn_interpolate(im, x_old, y_old, c);
-          set_pixel(new_im, x, y, c, v_old);
+          // resize according to the ratio
+          float x_pre = (x * w_ratio) + 0.5 * (w_ratio - 1);
+          float y_pre = (y * h_ratio) + 0.5 * (h_ratio - 1);
+          float v_pre = nn_interpolate(im, x_pre, y_pre, c);
+          set_pixel(new_im, x, y, c, v_pre);
         }
       }
     }
@@ -58,22 +59,28 @@ float bilinear_interpolate(image im, float x, float y, int c)
       It interpolates and returns the interpolated value.
     ************************************************************************/
     // considering 4 neighbor points x-wise and y-wise
-    float x1_y1_v = get_pixel(im, floorf(x), floorf(y), c);
-    float x2_y1_v = get_pixel(im, ceilf(x), floorf(y), c);
-    float x1_y2_v = get_pixel(im, floorf(x), ceilf(y), c);
-    float x2_y2_v = get_pixel(im, ceilf(x), ceilf(y), c);
+    // reference: https://en.wikipedia.org/wiki/Bilinear_interpolation
+    float x1 = floorf(x);
+    float x2 = ceilf(x);
+    float y1 = floorf(y);
+    float y2 = ceilf(y);
+
+    float Q11 = get_pixel(im, x1, y1, c);
+    float Q21 = get_pixel(im, x2, y1, c);
+    float Q12 = get_pixel(im, x1, y2, c);
+    float Q22 = get_pixel(im, x2, y2, c);
 
     // distance
-    float d1 = x - floorf(x);
-    float d2 = ceilf(x) - x;
-    float d3 = y - floorf(y);
-    float d4 = ceilf(y) - y;
+    float d1 = x - x1;
+    float d2 = x2 - x;
+    float d3 = y - y1;
+    float d4 = y2 - y;
     
     // weighted distance on x direction
-    float q1 = x1_y1_v * d2 + x2_y1_v * d1;
-    float q2 = x1_y2_v * d2 + x2_y2_v * d1;
+    float fxy1 = Q11 * d2 + Q21 * d1;
+    float fxy2 = Q12 * d2 + Q22 * d1;
     // weighted distance on y direction
-    float q = q1 * d4 + d3 * q2;
+    float q = fxy1 * d4 + fxy2 * d3;
     return q;
 }
 
@@ -85,17 +92,17 @@ image bilinear_resize(image im, int w, int h)
       of size "w x h". Algorithm is same as nearest-neighbor interpolation.
     ************************************************************************/
     image new_im = make_image(w, h, im.c);
-    
+    // use bilinear to resize
     float w_ratio = (float) im.w / w;
     float h_ratio = (float) im.h / h;
 
     for (int x = 0; x < w; x++) {
       for (int y = 0; y < h; y++) {
         for (int c = 0; c < im.c; c++) {
-          float x_old = x * w_ratio + 0.5 * (w_ratio - 1);
-          float y_old = y * h_ratio + 0.5 * (h_ratio - 1);
-          float v_old = bilinear_interpolate(im, x_old, y_old, c);
-          set_pixel(new_im, x, y, c, v_old);
+          float x_pre = x * w_ratio + 0.5 * (w_ratio - 1);
+          float y_pre = y * h_ratio + 0.5 * (h_ratio - 1);
+          float v_pre = bilinear_interpolate(im, x_pre, y_pre, c);
+          set_pixel(new_im, x, y, c, v_pre);
         }
       }
     }
@@ -179,7 +186,7 @@ image convolve_image(image im, image filter, int preserve)
       }
     }
     if (preserve != 1) {
-      // need to add the channel values together into one channel
+      // need to add the channel values together into one channel if preserve != 1
       image new_im_pre = make_image(im.w, im.h, 1);
       for (int i = 0; i < im.w; i++) {
         for (int j = 0; j < im.h; j++) {
@@ -246,12 +253,14 @@ image make_gaussian_filter(float sigma)
       is the next highest odd integer from 6 x sigma. Return the Gaussian filter.
     ************************************************************************/
     // kernel size
-    int w = (int) roundf(6*sigma) + 1;
+    int w = (int) roundf(6 * sigma) + 1;
+    if (w % 2 == 0) w += 1;
     image gaussian = make_box_filter(w);
-    int center = (int) w/2;
+    int half_w = (int) w/2;
     for (int i = 0; i < w; i++) {
       for (int j = 0; j < w; j++) {
-        float g = (1/(TWOPI*pow(sigma,2)))*expf(-(pow(i-center,2)+pow(j-center,2))/(2*pow(sigma,2)));
+        float g = (1 / (TWOPI * pow(sigma, 2))) * //
+        expf(-(pow(i - half_w, 2) + pow(j - half_w, 2)) / (2 * pow(sigma, 2)));
         set_pixel(gaussian, i, j, 0, g);
       }
     }
@@ -359,6 +368,8 @@ image *sobel_image(image im)
       Apply Sobel filter to the input image "im", get the magnitude as sobelimg[0]
       and gradient as sobelimg[1], and return the result.
     ************************************************************************/
+
+    // allocate the address
     image *sobelimg = calloc(2, sizeof(image));
     image gx_filter = make_gx_filter();
     image gy_filter = make_gy_filter();
@@ -366,6 +377,7 @@ image *sobel_image(image im)
     image gy_transform = convolve_image(im, gy_filter, 0);
     
     int w = im.w, h = im.h;
+
     image mag = make_image(w, h, 1);
     image gra = make_image(w, h, 1);
     for (int i = 0; i < w; i++) {
@@ -391,7 +403,7 @@ image colorize_sobel(image im)
     algorithm described in the README.
   ************************************************************************/
   float h = im.h, w = im.w;
-  image hsv_im = make_image(w, h, 3);
+  image hsvSobelImg = make_image(w, h, 3);
   image* sobelimg = calloc(2, sizeof(image));
   sobelimg = sobel_image(im);
 
@@ -402,18 +414,18 @@ image colorize_sobel(image im)
   // gra as the hue, and mag as the sat and value
   for (int i = 0; i < w; i++) {
     for (int j = 0; j < h; j++) {
-      set_pixel(hsv_im, i, j, 0, get_pixel(sob_gra, i, j, 0));
-      set_pixel(hsv_im, i, j, 1, get_pixel(sob_mag, i, j, 0));
-      set_pixel(hsv_im, i, j, 2, get_pixel(sob_mag, i, j, 0));
+      set_pixel(hsvSobelImg, i, j, 0, get_pixel(sob_gra, i, j, 0));
+      set_pixel(hsvSobelImg, i, j, 1, get_pixel(sob_mag, i, j, 0));
+      set_pixel(hsvSobelImg, i, j, 2, get_pixel(sob_mag, i, j, 0));
     }
   }
   // hsv to rgb
-  hsv_to_rgb(hsv_im);
+  hsv_to_rgb(hsvSobelImg);
   // gaussian filter
   image f = make_gaussian_filter(4);
   // need to preserve
-  hsv_im = convolve_image(hsv_im, f, 1);
-  return hsv_im;
+  hsvSobelImg = convolve_image(hsvSobelImg, f, 1);
+  return hsvSobelImg;
 }
 
 // EXTRA CREDIT: Median filter
